@@ -182,7 +182,7 @@
       const SPEED_STEP = 4;          // ms faster per food eaten
       const SPIKE_INTERVAL = 15000;  // a spiky ball arrives every 15 s of play time
       const WARN_TIME = 1500;        // warning marker shown this long before arrival (>= 1 s)
-      const SPIKE_LIFE = 10000;      // how long a spiky ball stays on the field
+      const SPIKE_LIFE = 60000;      // how long a spiky ball stays on the field (1 minute)
       const SPIKE_MIN_DIST = 5;      // minimum distance (in cells) from the player at spawn
 
       const canvas = document.getElementById('board');
@@ -212,13 +212,13 @@
       let best = Number(localStorage.getItem(HIGH_KEY) || 0);
 
       let snake, dir, nextDirQueue, food, score, tickMs, timer;
-      let gameTime, nextSpikeAt, warnedFor, spikeWarn, spike, deathCause;
+      let gameTime, nextSpikeAt, warnedFor, spikeWarn, spikes, deathCause;
       let state = 'ready'; // ready | running | paused | over
 
       function blockedCells() {
         const cells = [...snake];
         if (food) cells.push(food);
-        if (spike) cells.push(spike);
+        for (const sp of spikes) cells.push(sp);
         if (spikeWarn) cells.push(spikeWarn);
         return cells;
       }
@@ -265,7 +265,7 @@
         nextSpikeAt = SPIKE_INTERVAL;
         warnedFor = null;
         spikeWarn = null;
-        spike = null;
+        spikes = [];
         deathCause = null;
         food = null;
         food = randomFreeCell();
@@ -283,11 +283,14 @@
         }
         // The ball arrives on the marked cell.
         if (gameTime >= nextSpikeAt) {
-          spike = spikeWarn ? { x: spikeWarn.x, y: spikeWarn.y, expireAt: gameTime + SPIKE_LIFE } : null;
+          if (spikeWarn) {
+            spikes.push({ x: spikeWarn.x, y: spikeWarn.y, expireAt: gameTime + SPIKE_LIFE });
+          }
           spikeWarn = null;
           nextSpikeAt += SPIKE_INTERVAL;
         }
-        if (spike && gameTime >= spike.expireAt) spike = null;
+        // Remove balls that have stayed their full lifetime.
+        spikes = spikes.filter(sp => gameTime < sp.expireAt);
       }
 
       function updateHud() {
@@ -338,7 +341,7 @@
         }
 
         // Spiky ball: touching it kills the player.
-        if (spike && newHead.x === spike.x && newHead.y === spike.y) {
+        if (spikes.some(sp => sp.x === newHead.x && sp.y === newHead.y)) {
           deathCause = 'spiky ball';
           return gameOver();
         }
@@ -369,7 +372,7 @@
 
         updateSpikes();
         // The ball may land under the snake's head.
-        if (spike && snake[0].x === spike.x && snake[0].y === spike.y) {
+        if (spikes.some(sp => sp.x === snake[0].x && sp.y === snake[0].y)) {
           deathCause = 'spiky ball';
           return gameOver();
         }
@@ -444,7 +447,7 @@
         // Spiky-ball warning marker and the ball itself
         const now = performance.now();
         if (spikeWarn) drawWarning(now);
-        if (spike) drawSpike(spike, now);
+        for (const sp of spikes) drawSpike(sp, now);
 
         // Snake
         snake.forEach((s, i) => {
