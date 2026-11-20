@@ -18,4 +18,5 @@ python3 -m http.server 8000
 - Restart: R
 - Eat food to grow and earn 10 points; the snake speeds up as it grows.
 - Every 15 seconds a spiky ball arrives at least 5 cells away from you. A red warning marker appears 1.5 seconds before it lands. Touching the ball kills you. Each ball stays for one minute, so several can be on the board at once.
+- Every 30 seconds a yellow warning marks a row where a ghost train will pass 10 seconds later. The train sweeps across the row quickly. If it touches any part of your snake, you lose 3 length and 20 points (score won't go below 0). Game speed is unchanged.
 - The best score is saved in your browser's local storage.
