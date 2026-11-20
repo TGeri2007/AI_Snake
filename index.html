@@ -179,6 +179,12 @@
       const START_LEN = 3;
       const BASE_TICK = 140;         // ms per move at start
       const MIN_TICK = 60;           // fastest possible speed
+      const TRAIN_PERIOD = 30000;        // a train warning appears every 30 s of play time
+      const TRAIN_DELAY = 10000;         // the ghost train passes 10 s after its warning
+      const TRAIN_PASS_MS = 600;         // how long a ghost train takes to cross the board
+      const TRAIN_LEN = 6;               // length of the ghost train in cells
+      const TRAIN_PENALTY_LEN = 3;       // snake segments lost when hit
+      const TRAIN_PENALTY_POINTS = 20;   // points lost when hit (score never goes below 0)
       const SPEED_STEP = 4;          // ms faster per food eaten
       const SPIKE_INTERVAL = 15000;  // a spiky ball arrives every 15 s of play time
       const WARN_TIME = 1500;        // warning marker shown this long before arrival (>= 1 s)
@@ -213,6 +219,7 @@
 
       let snake, dir, nextDirQueue, food, score, tickMs, timer;
       let gameTime, nextSpikeAt, warnedFor, spikeWarn, spikes, deathCause;
+      let nextTrainWarnAt, trainPlan, popup;
       let state = 'ready'; // ready | running | paused | over
 
       function blockedCells() {
@@ -267,6 +274,9 @@
         spikeWarn = null;
         spikes = [];
         deathCause = null;
+        nextTrainWarnAt = TRAIN_PERIOD;
+        trainPlan = null;
+        popup = null;
         food = null;
         food = randomFreeCell();
         updateHud();
@@ -370,6 +380,7 @@
           snake.pop();
         }
 
+        const prevTime = gameTime;
         updateSpikes();
         // The ball may land under the snake's head.
         if (spikes.some(sp => sp.x === snake[0].x && sp.y === snake[0].y)) {
@@ -377,6 +388,7 @@
           return gameOver();
         }
 
+        updateTrains(prevTime);
         updateHud();
         draw();
         scheduleTick();
@@ -448,6 +460,8 @@
         const now = performance.now();
         if (spikeWarn) drawWarning(now);
         for (const sp of spikes) drawSpike(sp, now);
+        if (trainPlan) drawTrain(now);
+        if (popup && gameTime < popup.until) drawPopup();
 
         // Snake
         snake.forEach((s, i) => {
@@ -476,6 +490,113 @@
         if (state === 'paused') {
           // overlay handles text
         }
+      }
+
+      // Ghost train: warning 30 s after the last one, then it passes 10 s later.
+      function updateTrains(prevTime) {
+        if (!trainPlan && gameTime >= nextTrainWarnAt) {
+          trainPlan = {
+            row: Math.floor(Math.random() * GRID),
+            dir: Math.random() < 0.5 ? 'right' : 'left',
+            startAt: gameTime + TRAIN_DELAY,
+            hit: false,
+          };
+          nextTrainWarnAt += TRAIN_PERIOD;
+        }
+        if (!trainPlan) return;
+
+        const p = trainPlan;
+        const end = p.startAt + TRAIN_PASS_MS;
+        if (gameTime >= p.startAt && !p.hit) {
+          // Check every cell the train swept through since the last tick,
+          // so a fast train cannot skip over a snake segment.
+          const t0 = Math.max(prevTime, p.startAt);
+          const t1 = Math.min(gameTime, end);
+          if (t1 > t0) {
+            const range = coveredRange(p, (t0 - p.startAt) / TRAIN_PASS_MS, (t1 - p.startAt) / TRAIN_PASS_MS);
+            if (snake.some(seg => seg.y === p.row && seg.x >= range.lo && seg.x <= range.hi)) {
+              p.hit = true;
+              applyTrainHit();
+            }
+          }
+        }
+        if (gameTime >= end) trainPlan = null;
+      }
+
+      // Range of columns the train occupies between progress p0 and p1 (0..1 of the pass).
+      function coveredRange(p, p0, p1) {
+        const span = GRID + TRAIN_LEN;
+        if (p.dir === 'right') {
+          // Front (rightmost) cell moves from x=-1 to x=GRID+TRAIN_LEN-1.
+          const h0 = -1 + p0 * span, h1 = -1 + p1 * span;
+          return { lo: Math.floor(h0) - TRAIN_LEN + 1, hi: Math.floor(h1) };
+        }
+        // Front (leftmost) cell moves from x=GRID down to x=-TRAIN_LEN.
+        const l0 = GRID - p0 * span, l1 = GRID - p1 * span;
+        return { lo: Math.floor(l1), hi: Math.floor(l0) + TRAIN_LEN - 1 };
+      }
+
+      function applyTrainHit() {
+        const remove = Math.min(TRAIN_PENALTY_LEN, snake.length - 1);
+        if (remove > 0) snake.splice(snake.length - remove, remove);
+        score = Math.max(0, score - TRAIN_PENALTY_POINTS);
+        const parts = [];
+        if (remove > 0) parts.push('-' + remove + ' length');
+        parts.push('-' + TRAIN_PENALTY_POINTS + ' pts');
+        popup = { text: 'Ghost train! ' + parts.join(', '), until: gameTime + 1500 };
+      }
+
+      function drawTrain(now) {
+        const p = trainPlan;
+        const y0 = p.row * CELL;
+        ctx.save();
+        if (gameTime < p.startAt) {
+          // Warning band on the row the train will use
+          const pulse = (Math.sin(now / 150) + 1) / 2;
+          ctx.fillStyle = 'rgba(250, 204, 21, ' + (0.12 + 0.2 * pulse).toFixed(3) + ')';
+          ctx.fillRect(0, y0, canvas.width, CELL);
+          ctx.strokeStyle = 'rgba(250, 204, 21, ' + (0.6 + 0.4 * pulse).toFixed(3) + ')';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([8, 6]);
+          ctx.strokeRect(1, y0 + 1, canvas.width - 2, CELL - 2);
+          ctx.setLineDash([]);
+          const secs = Math.ceil((p.startAt - gameTime) / 1000);
+          ctx.fillStyle = '#fde68a';
+          ctx.font = 'bold ' + Math.round(CELL * 0.45) + 'px system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('TRAIN ' + (p.dir === 'right' ? '→' : '←') + '  ' + secs + 's', canvas.width / 2, y0 + CELL / 2 + 1);
+        } else {
+          // Ghost train sweeping across the row
+          const prog = Math.min(1, (gameTime - p.startAt) / TRAIN_PASS_MS);
+          const span = GRID + TRAIN_LEN;
+          const front = p.dir === 'right' ? -1 + prog * span : GRID - prog * span;
+          const step = p.dir === 'right' ? -1 : 1;
+          for (let i = 0; i < TRAIN_LEN; i++) {
+            const x = front + step * i;
+            const isHead = i === 0;
+            ctx.fillStyle = isHead ? 'rgba(255, 255, 255, 0.7)' : 'rgba(226, 232, 240, 0.35)';
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+            ctx.lineWidth = 2;
+            roundRect(x * CELL + 2, y0 + 3, CELL - 4, CELL - 6, 5);
+            ctx.fill();
+            ctx.stroke();
+          }
+        }
+        ctx.restore();
+      }
+
+      function drawPopup() {
+        ctx.save();
+        ctx.font = 'bold 16px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = 'rgba(15, 20, 32, 0.9)';
+        ctx.strokeText(popup.text, canvas.width / 2, 8);
+        ctx.fillStyle = '#fca5a5';
+        ctx.fillText(popup.text, canvas.width / 2, 8);
+        ctx.restore();
       }
 
       function drawWarning(now) {
